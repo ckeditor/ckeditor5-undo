@@ -36,14 +36,6 @@ export default class UndoEngine extends Feature {
 		 * @member {undo.UndoEngineCommand} undo.UndoEngine#_redoCommand
 		 */
 		this._redoCommand = null;
-
-		/**
-		 * Keeps track of which batch has already been added to undo manager.
-		 *
-		 * @private
-		 * @member {WeakSet.<engine.model.Batch>} undo.UndoEngine#_batchRegistry
-		 */
-		this._batchRegistry = new WeakSet();
 	}
 
 	/**
@@ -51,8 +43,8 @@ export default class UndoEngine extends Feature {
 	 */
 	init() {
 		// Create commands.
-		this._redoCommand = new UndoCommand( this.editor );
-		this._undoCommand = new UndoCommand( this.editor );
+		this._undoCommand = new UndoCommand( this.editor, 'undo' );
+		this._redoCommand = new UndoCommand( this.editor, 'redo' );
 
 		// Register command to the editor.
 		this.editor.commands.set( 'redo', this._redoCommand );
@@ -60,21 +52,14 @@ export default class UndoEngine extends Feature {
 
 		this.listenTo( this.editor.document, 'change', ( evt, type, changes, batch ) => {
 			// Whenever a new batch is created add it to the undo history and clear redo history.
-			if ( batch && !this._batchRegistry.has( batch ) ) {
-				this._batchRegistry.add( batch );
+			if ( batch.type === undefined ) {
 				this._undoCommand.addBatch( batch );
 				this._redoCommand.clearStack();
+			} else if ( batch.type == 'undo' ) {
+				this._redoCommand.addBatch( batch );
+			} else if ( batch.type == 'redo' ) {
+				this._undoCommand.addBatch( batch );
 			}
-		} );
-
-		// Whenever batch is reverted by undo command, add it to redo history.
-		this.listenTo( this._redoCommand, 'revert', ( evt, batch ) => {
-			this._undoCommand.addBatch( batch );
-		} );
-
-		// Whenever batch is reverted by redo command, add it to undo history.
-		this.listenTo( this._undoCommand, 'revert', ( evt, batch ) => {
-			this._redoCommand.addBatch( batch );
 		} );
 	}
 }
