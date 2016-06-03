@@ -115,12 +115,12 @@ describe( 'UndoEngine integration', () => {
 			output( '<p>o</p><p>b<selection /></p>' );
 
 			editor.execute( 'undo' );
-			// Here is an edge case that selection could be before or after `ar` but selection always ends up after.
-			output( '<p>o</p><p>bar<selection /></p>' );
+			// Here is an edge case that selection could be before or after `ar`.
+			output( '<p>o</p><p>b<selection />ar</p>' );
 
 			editor.execute( 'undo' );
 			// As above.
-			output( '<p>fo<selection />o</p><p>bar</p>' );
+			output( '<p><selection />foo</p><p>bar</p>' );
 
 			undoDisabled();
 		} );
@@ -136,7 +136,7 @@ describe( 'UndoEngine integration', () => {
 			output( '<p>fozzzo</p><p>b<selection />r</p>' );
 
 			editor.execute( 'undo' );
-			output( '<p>fozzzo</p><p>ba<selection />r</p>' );
+			output( '<p>fozzzo</p><p>b<selection />ar</p>' );
 
 			editor.execute( 'undo' );
 			output( '<p>fo<selection />o</p><p>bar</p>' );
@@ -230,7 +230,7 @@ describe( 'UndoEngine integration', () => {
 			input( 'fo<selection>zb</selection>ar' );
 
 			doc.batch().wrap( doc.selection.getFirstRange(), 'p' );
-			output( 'fo<p><selection>zb</selection></p>ar' );
+			output( 'fo<selection><p>zb</p></selection>ar' );
 
 			editor.execute( 'undo' );
 			output( 'fo<selection>zb</selection>ar' );
