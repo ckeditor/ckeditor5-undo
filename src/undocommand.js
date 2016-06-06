@@ -46,8 +46,7 @@ export default class UndoCommand extends Command {
 	addBatch( batch ) {
 		const selection = {
 			ranges: Array.from( this.editor.document.selection.getRanges() ),
-			isBackward: this.editor.document.selection.isBackward,
-			baseVersion: batch.deltas[ 0 ].baseVersion
+			isBackward: this.editor.document.selection.isBackward
 		};
 
 		this._items.push( { batch, selection } );
@@ -84,12 +83,16 @@ export default class UndoCommand extends Command {
 		const toUndo = this._items.splice( batchIndex, 1 )[ 0 ];
 		const document = this.editor.document;
 
+		// All changes done by the undo command execution will be saved as one batch.
+		const undoingBatch = new Batch();
+		undoingBatch.type = this._type;
+
 		// All changes has to be done in one `enqueueChanges` callback so other listeners will not
 		// step between consecutive deltas that are undoing given batch, or won't do changes
 		// do the document before selection is properly restored.
 		document.enqueueChanges( () => {
-			undo( toUndo.batch, this.editor.document );
-			restoreSelection( toUndo.selection, this.editor.document );
+			undo( toUndo.batch, undoingBatch, this.editor.document );
+			restoreSelection( toUndo.selection, toUndo.batch.deltas[ 0 ].baseVersion, this.editor.document );
 		} );
 
 		this.refreshState();
@@ -98,14 +101,10 @@ export default class UndoCommand extends Command {
 
 // Helper function for `UndoCommand`.
 // Does all the things needed to undo `batchToUndo` batch.
-function undo( batchToUndo, document ) {
+function undo( batchToUndo, undoingBatch, document ) {
 	const history = document.history;
 	const deltasToUndo = batchToUndo.deltas.slice();
 	deltasToUndo.reverse();
-
-	// All changes done by the undo command execution will be saved as one batch.
-	const undoingBatch = new Batch();
-	undoingBatch.type = this._type;
 
 	// For each delta from `batchToUndo`, in reverse order.
 	for ( let deltaToUndo of deltasToUndo ) {
@@ -114,19 +113,28 @@ function undo( batchToUndo, document ) {
 		// 1. Reverse the delta.
 		let reversedDelta = [ deltaToUndo.getReversed() ];
 
+		const updatedHistoryDeltas = {};
+
 		// 2. Get all active deltas from document history that happened after `deltaToUndo`.
-		for ( let historyDelta of history.getDeltas( deltaToUndo.baseVersion ) ) {
+		for ( let historyItem of history.getDeltas( deltaToUndo.baseVersion ) ) {
+			// History returns a delta and it's index in the history.
+			// Multiple history deltas might be stored under one index, though.
+			const historyDelta = historyItem.delta;
+			const historyIndex = historyItem.index;
+
 			// 2.1. Transform delta from document history by reversed delta to undo.
 			// We need this to update document history.
-			const updatedHistoryDelta = transformDelta( historyDelta, reversedDelta, false );
+			const updatedHistoryDelta = transformDelta( [ historyDelta ], reversedDelta, false );
 
 			// 2.2. Transform reversed delta to undo by a delta from document history.
-			reversedDelta = transformDelta( reversedDelta, historyDelta, true );
+			reversedDelta = transformDelta( reversedDelta, [ historyDelta ], true );
 
-			// 2.3. Update delta from document history with new version.
-			// This new version is a version that got transformed by reversed delta to undo.
-			// In other words, this new delta from history "does not remember" the delta that we are undoing right now.
-			history.updateDelta( historyDelta, updatedHistoryDelta );
+			// 2.3. Store updated history delta so it will be updated in history after `deltaToUndo` gets processed.
+			if ( !updatedHistoryDeltas[ historyIndex ] ) {
+				updatedHistoryDeltas[ historyIndex ] = [];
+			}
+
+			updatedHistoryDeltas[ historyIndex ] = updatedHistoryDeltas[ historyIndex ].concat( updatedHistoryDelta );
 		}
 
 		// 3. After `reversedDelta` has been transformed by all active deltas in history, apply it.
@@ -135,7 +143,7 @@ function undo( batchToUndo, document ) {
 			undoingBatch.addDelta( delta );
 
 			// Now, apply all operations of the delta.
-			for ( let operation of delta ) {
+			for ( let operation of delta.operations ) {
 				document.applyOperation( operation );
 			}
 		}
@@ -146,38 +154,47 @@ function undo( batchToUndo, document ) {
 		for ( let delta of reversedDelta ) {
 			history.markInactiveDelta( delta );
 		}
+
+		// 5. Update deltas in history.
+		for ( let historyIndex in updatedHistoryDeltas ) {
+			history.updateDelta( Number( historyIndex ), updatedHistoryDeltas[ historyIndex ] );
+		}
 	}
 }
 
 // Helper function for `UndoCommand`.
-// Performs a transformation set of deltas `setToTransform` by given
-// `transformBy` delta. If `setToTransform` deltas are more important than
-// `transformBy` delta, set `isStrong` to true.
-function transformDelta( setToTransform, transformBy, isStrong = false ) {
-	let transformedSet = [];
+// Performs a transformation of set of deltas `setToTransform` by given
+// `setToTransformBy` set of deltas. If `setToTransform` deltas are more important than
+// `setToTransformBy` deltas, `isStrong` should be true.
+function transformDelta( setToTransform, setToTransformBy, isStrong = false ) {
+	let results = [];
 
-	for ( let delta of setToTransform ) {
-		transformedSet.concat( transform( delta, transformBy, isStrong ) );
+	for ( let toTransform of setToTransform ) {
+		let to = [ toTransform ];
+
+		for ( let t = 0; t < to.length; t++ ) {
+			for ( let transformBy of setToTransformBy ) {
+				let transformed = transform( to[ t ], transformBy, isStrong );
+				to.splice( t, 1, ...transformed );
+				t = t - 1 + transformed.length;
+			}
+		}
+
+		results = results.concat( to );
 	}
 
-	return transformedSet;
+	return results;
 }
 
 // Helper function for `UndoCommand`.
 // Is responsible for restoring given `selectionState` and transform it
 // accordingly to the changes that happened to the document after the
 // `selectionState` got saved.
-function restoreSelection( selectionState, document ) {
+function restoreSelection( selectionState, baseVersion, document ) {
 	const history = document.history;
-	
+
 	// Take all selection ranges that were stored with undone batch.
 	const ranges = selectionState.ranges;
-
-	// The ranges will be transformed by active deltas from history that happened
-	// after the selection got stored. Note, that at this point the document history
-	// already is updated so we will not transform the range by deltas that got undone,
-	// or their reversed version.
-	const deltas = Array.from( history.getDeltas( selectionState.baseVersion ) );
 
 	// This will keep the transformed selection ranges.
 	const transformedRanges = [];
@@ -189,7 +206,13 @@ function restoreSelection( selectionState, document ) {
 		// For that reason, we keep all transformed ranges in one array and operate on it.
 		let transformed = [ originalRange ];
 
-		for ( let delta of deltas ) {
+		// The ranges will be transformed by active deltas from history that happened
+		// after the selection got stored. Note, that at this point the document history
+		// already is updated so we will not transform the range by deltas that got undone,
+		// or their reversed version.
+		for ( let historyItem of history.getDeltas( baseVersion ) ) {
+			const delta = historyItem.delta;
+
 			for ( let operation of delta.operations ) {
 				// We look through all operations from all deltas.
 

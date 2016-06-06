@@ -279,17 +279,5 @@ describe( 'UndoCommand', () => {
 			expect( editor.document.selection.getRanges().next().value.isEqual( r( 0, 0 ) ) ).to.be.true;
 			expect( editor.document.selection.isBackward ).to.be.false;
 		} );
-
-		it( 'should fire undo event with the undone batch', () => {
-			const batch = doc.batch();
-			const spy = sinon.spy();
-
-			undo.on( 'revert', spy );
-
-			undo._execute();
-
-			expect( spy.calledOnce ).to.be.true;
-			expect( spy.calledWith( batch ) );
-		} );
 	} );
 } );

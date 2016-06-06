@@ -32,7 +32,7 @@ describe( 'UndoEngine', () => {
 		expect( editor.commands.get( 'redo' ) ).to.equal( undo._redoCommand );
 	} );
 
-	it( 'should add a batch to undo command, if it\'s type is undefined and clear redo stack', () => {
+	it( 'should add a batch to undo command and clear redo stack, if it\'s type is different than "undo" and "redo"', () => {
 		sinon.spy( undo._undoCommand, 'addBatch' );
 		sinon.spy( undo._redoCommand, 'clearStack' );
 
@@ -69,17 +69,5 @@ describe( 'UndoEngine', () => {
 
 		expect( undo._redoCommand.addBatch.calledOnce ).to.be.true;
 		expect( undo._redoCommand.addBatch.calledWith( batch ) ).to.be.true;
-	} );
-
-	it( 'should not add unrecognized type of batch', () => {
-		batch.type = 'foobar';
-
-		sinon.spy( undo._undoCommand, 'addBatch' );
-		sinon.spy( undo._redoCommand, 'addBatch' );
-
-		batch.insert( new Position( root, [ 0 ] ), 'foobar' );
-
-		expect( undo._undoCommand.addBatch.called ).to.be.false;
-		expect( undo._redoCommand.addBatch.called ).to.be.false;
 	} );
 } );
