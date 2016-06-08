@@ -6,6 +6,8 @@
 'use strict';
 
 import Command from '../command/command.js';
+import Batch from '../engine/model/batch.js';
+import transform from '../engine/model/delta/transform.js';
 
 /**
  * Undo command stores batches in itself and is able to and apply reverted versions of them on the document.
@@ -13,7 +15,7 @@ import Command from '../command/command.js';
  * @memberOf undo
  */
 export default class UndoCommand extends Command {
-	constructor( editor ) {
+	constructor( editor, type ) {
 		super( editor );
 
 		/**
@@ -26,6 +28,14 @@ export default class UndoCommand extends Command {
 		 * @member {Array} undo.UndoCommand#_items
 		 */
 		this._items = [];
+
+		/**
+		 * Command type. Could be `"undo"` or `"redo"`.
+		 *
+		 * @private
+		 * @member {'undo'|'redo'} undo.UndoCommand#_type
+		 */
+		this._type = type;
 	}
 
 	/**
@@ -66,146 +76,228 @@ export default class UndoCommand extends Command {
 	 * @fires undo.undoCommand#event:revert
 	 * @param {engine.model.Batch} [batch] If set, batch that should be undone. If not set, the last added batch will be undone.
 	 */
-	_doExecute( batch ) {
-		let batchIndex;
-
+	_doExecute( batch = null ) {
 		// If batch is not given, set `batchIndex` to the last index in command stack.
-		// If it is given, find it on the stack.
-		if ( !batch ) {
-			batchIndex = this._items.length - 1;
-		} else {
-			batchIndex = this._items.findIndex( item => item.batch == batch );
-		}
+		let batchIndex = batch ? this._items.findIndex( ( a ) => a.batch == batch ) : this._items.length - 1;
 
-		const undoItem = this._items.splice( batchIndex, 1 )[ 0 ];
+		const toUndo = this._items.splice( batchIndex, 1 )[ 0 ];
+		const document = this.editor.document;
 
-		// Get the batch to undo.
-		const undoBatch = undoItem.batch;
-		const undoDeltas = undoBatch.deltas.slice();
-		// Deltas have to be applied in reverse order, so if batch did A B C, it has to do reversed C, reversed B, reversed A.
-		undoDeltas.reverse();
+		// All changes done by the undo command execution will be saved as one batch.
+		const undoingBatch = new Batch();
+		undoingBatch.type = this._type;
 
-		// Reverse the deltas from the batch, transform them, apply them.
-		for ( let undoDelta of undoDeltas ) {
-			const undoDeltaReversed = undoDelta.getReversed();
-			const updatedDeltas = this.editor.document.history.getTransformedDelta( undoDeltaReversed );
+		// All changes has to be done in one `enqueueChanges` callback so other listeners will not
+		// step between consecutive deltas that are undoing given batch, or won't do changes
+		// do the document before selection is properly restored.
+		document.enqueueChanges( () => {
+			undo( toUndo.batch, undoingBatch, this.editor.document );
+			restoreSelection( toUndo.selection, toUndo.batch.deltas[ 0 ].baseVersion, this.editor.document );
+		} );
 
-			for ( let delta of updatedDeltas ) {
-				for ( let operation of delta.operations ) {
-					this.editor.document.applyOperation( operation );
-				}
-			}
-		}
-
-		// Get the selection state stored with this batch.
-		const selectionState = undoItem.selection;
-
-		// Take all selection ranges that were stored with undone batch.
-		const ranges = selectionState.ranges;
-
-		// The ranges will be transformed by deltas from history that took place
-		// after the selection got stored.
-		const deltas = this.editor.document.history.getDeltas( undoBatch.deltas[ 0 ].baseVersion );
-
-		// This will keep the transformed ranges.
-		const transformedRanges = [];
-
-		for ( let originalRange of ranges ) {
-			// We create `transformed` array. At the beginning it will have only the original range.
-			// During transformation the original range will change or even break into smaller ranges.
-			// After the range is broken into two ranges, we have to transform both of those ranges separately.
-			// For that reason, we keep all transformed ranges in one array and operate on it.
-			let transformed = [ originalRange ];
-
-			for ( let delta of deltas ) {
-				for ( let operation of delta.operations ) {
-					// We look through all operations from all deltas.
-
-					for ( let t = 0; t < transformed.length; t++ ) {
-						// We transform every range by every operation.
-						// We keep current state of transformation in `transformed` array and update it.
-						let result;
-
-						switch ( operation.type ) {
-							case 'insert':
-								result = transformed[ t ].getTransformedByInsertion(
-									operation.position,
-									operation.nodeList.length,
-									true
-								);
-								break;
-
-							case 'move':
-							case 'remove':
-							case 'reinsert':
-								result = transformed[ t ].getTransformedByMove(
-									operation.sourcePosition,
-									operation.targetPosition,
-									operation.howMany,
-									true
-								);
-								break;
-						}
-
-						// If we have a transformation result, we substitute it in `transformed` array with
-						// the range that got transformed. Keep in mind that the result is an array
-						// and may contain multiple ranges.
-						if ( result ) {
-							transformed.splice( t, 1, ...result );
-
-							// Fix iterator.
-							t = t + result.length - 1;
-						}
-					}
-				}
-			}
-
-			// After `originalRange` got transformed, we have an array of ranges. Some of those
-			// ranges may be "touching" -- they can be next to each other and could be merged.
-			// Let's do this. First, we have to sort those ranges because they don't have to be
-			// in an order.
-			transformed.sort( ( a, b ) => a.start.isBefore( b.start ) ? -1 : 1 );
-
-			// Then we check if two consecutive ranges are touching. We can do it pair by pair
-			// in one dimensional loop because ranges are sorted.
-			for ( let i = 1 ; i < transformed.length; i++ ) {
-				let a = transformed[ i - 1 ];
-				let b = transformed[ i ];
-
-				if ( a.end.isTouching( b.start ) ) {
-					a.end = b.end;
-					transformed.splice( i, 1 );
-					i--;
-				}
-			}
-
-			// For each `originalRange` from `ranges`, we take only one transformed range.
-			// This is because we want to prevent situation where single-range selection
-			// got transformed to mulit-range selection. We will take the first range that
-			// is not in the graveyard.
-			const transformedRange = transformed.find(
-				( range ) => range.start.root != this.editor.document.graveyard
-			);
-
-			if ( transformedRange ) {
-				transformedRanges.push( transformedRange );
-			}
-		}
-
-		// `transformedRanges` may be empty if all ranges ended up in graveyard.
-		// If that is the case, do not restore selection.
-		if ( transformedRanges.length ) {
-			this.editor.document.selection.setRanges( transformedRanges, selectionState.isBackward );
-		}
-
+		this.fire( 'revert', toUndo.batch );
 		this.refreshState();
-		this.fire( 'revert', undoBatch );
 	}
 }
 
-/**
- * Fired after `UndoCommand` reverts a batch.
- *
- * @event undo.UndoCommand#revert
- * @param {engine.model.Batch} undoBatch The batch instance that got reverted.
- */
+// Helper function for `UndoCommand`.
+// Does all the things needed to undo `batchToUndo` batch.
+function undo( batchToUndo, undoingBatch, document ) {
+	const history = document.history;
+	const deltasToUndo = batchToUndo.deltas.slice();
+	deltasToUndo.reverse();
+
+	// For each delta from `batchToUndo`, in reverse order.
+	for ( let deltaToUndo of deltasToUndo ) {
+		// Keep in mind that all algorithms return arrays, as the transformation might result
+		// in multiple deltas. For simplicity reasons, we will use singular form in description and names.
+		// 1. Reverse the delta.
+		let reversedDelta = [ deltaToUndo.getReversed() ];
+
+		// Stores history deltas transformed by `deltaToUndo`. Will be used later to updated document history.
+		const updatedHistoryDeltas = {};
+
+		// Base version from which to get history delta. We want to transform through all the deltas from history
+		// that happened after this delta, so we set baseVersion just after this delta.
+		const historyVersion = deltaToUndo.baseVersion + deltaToUndo.operations.length;
+
+		// 2. Get all active deltas from document history that happened after `deltaToUndo`.
+		for ( let historyItem of history.getHistoryItems( historyVersion ) ) {
+			// History returns a delta and it's index in the history.
+			// Multiple history deltas might be stored under one index, though.
+			const historyDelta = historyItem.delta;
+			const historyIndex = historyItem.index;
+
+			// 2.1. Transform delta from document history by reversed delta to undo.
+			// We need this to update document history.
+			const updatedHistoryDelta = transformDelta( [ historyDelta ], reversedDelta, false );
+
+			// 2.2. Transform reversed delta to undo by a delta from document history.
+			reversedDelta = transformDelta( reversedDelta, [ historyDelta ], true );
+
+			// 2.3. Store updated history delta so it will be updated in history after `deltaToUndo` gets processed.
+			if ( !updatedHistoryDeltas[ historyIndex ] ) {
+				updatedHistoryDeltas[ historyIndex ] = [];
+			}
+
+			updatedHistoryDeltas[ historyIndex ] = updatedHistoryDeltas[ historyIndex ].concat( updatedHistoryDelta );
+		}
+
+		// 3. After `reversedDelta` has been transformed by all active deltas in history, apply it.
+		for ( let delta of reversedDelta ) {
+			delta.baseVersion = document.version;
+
+			// Before applying, add the delta to the `undoingBatch`.
+			undoingBatch.addDelta( delta );
+
+			// Now, apply all operations of the delta.
+			for ( let operation of delta.operations ) {
+				document.applyOperation( operation );
+			}
+		}
+
+		// 4. Set `reversedDelta` and `deltaToUndo` as inactive deltas in history.
+		history.markInactiveDelta( deltaToUndo );
+
+		for ( let delta of reversedDelta ) {
+			history.markInactiveDelta( delta );
+		}
+
+		// 5. Update deltas in history.
+		for ( let historyIndex in updatedHistoryDeltas ) {
+			history.updateDelta( Number( historyIndex ), updatedHistoryDeltas[ historyIndex ] );
+		}
+	}
+}
+
+// Helper function for `UndoCommand`.
+// Performs a transformation of set of deltas `setToTransform` by given
+// `setToTransformBy` set of deltas. If `setToTransform` deltas are more important than
+// `setToTransformBy` deltas, `isStrong` should be true.
+function transformDelta( setToTransform, setToTransformBy, isStrong = false ) {
+	let results = [];
+
+	for ( let toTransform of setToTransform ) {
+		let to = [ toTransform ];
+
+		for ( let t = 0; t < to.length; t++ ) {
+			for ( let transformBy of setToTransformBy ) {
+				let transformed = transform( to[ t ], transformBy, isStrong );
+				to.splice( t, 1, ...transformed );
+				t = t - 1 + transformed.length;
+			}
+		}
+
+		results = results.concat( to );
+	}
+
+	return results;
+}
+
+// Helper function for `UndoCommand`.
+// Is responsible for restoring given `selectionState` and transform it
+// accordingly to the changes that happened to the document after the
+// `selectionState` got saved.
+function restoreSelection( selectionState, baseVersion, document ) {
+	const history = document.history;
+
+	// Take all selection ranges that were stored with undone batch.
+	const ranges = selectionState.ranges;
+
+	// This will keep the transformed selection ranges.
+	const transformedRanges = [];
+
+	for ( let originalRange of ranges ) {
+		// We create `transformed` array. At the beginning it will have only the original range.
+		// During transformation the original range will change or even break into smaller ranges.
+		// After the range is broken into two ranges, we have to transform both of those ranges separately.
+		// For that reason, we keep all transformed ranges in one array and operate on it.
+		let transformed = [ originalRange ];
+
+		// The ranges will be transformed by active deltas from history that happened
+		// after the selection got stored. Note, that at this point the document history
+		// already is updated so we will not transform the range by deltas that got undone,
+		// or their reversed version.
+		for ( let historyItem of history.getHistoryItems( baseVersion ) ) {
+			const delta = historyItem.delta;
+
+			for ( let operation of delta.operations ) {
+				// We look through all operations from all deltas.
+
+				for ( let i = 0; i < transformed.length; i++ ) {
+					// We transform every range by every operation.
+					// We keep current state of transformation in `transformed` array and update it.
+					let result;
+
+					switch ( operation.type ) {
+						case 'insert':
+							result = transformed[ i ].getTransformedByInsertion(
+								operation.position,
+								operation.nodeList.length,
+								true
+							);
+							break;
+
+						case 'move':
+						case 'remove':
+						case 'reinsert':
+							result = transformed[ i ].getTransformedByMove(
+								operation.sourcePosition,
+								operation.targetPosition,
+								operation.howMany,
+								true
+							);
+							break;
+					}
+
+					// If we have a transformation result, we substitute it in `transformed` array with
+					// the range that got transformed. Keep in mind that the result is an array
+					// and may contain multiple ranges.
+					if ( result ) {
+						transformed.splice( i, 1, ...result );
+
+						// Fix iterator.
+						i = i + result.length - 1;
+					}
+				}
+			}
+		}
+
+		// After `originalRange` got transformed, we have an array of ranges. Some of those
+		// ranges may be "touching" -- they can be next to each other and could be merged.
+		// Let's do this. First, we have to sort those ranges because they don't have to be
+		// in an order.
+		transformed.sort( ( a, b ) => a.start.isBefore( b.start ) ? -1 : 1 );
+
+		// Then we check if two consecutive ranges are touching. We can do it pair by pair
+		// in one dimensional loop because ranges are sorted.
+		for ( let i = 1 ; i < transformed.length; i++ ) {
+			let a = transformed[ i - 1 ];
+			let b = transformed[ i ];
+
+			if ( a.end.isTouching( b.start ) ) {
+				a.end = b.end;
+				transformed.splice( i, 1 );
+				i--;
+			}
+		}
+
+		// For each `originalRange` from `ranges`, we take only one transformed range.
+		// This is because we want to prevent situation where single-range selection
+		// got transformed to mulit-range selection. We will take the first range that
+		// is not in the graveyard.
+		const transformedRange = transformed.find(
+			( range ) => range.start.root != document.graveyard
+		);
+
+		if ( transformedRange ) {
+			transformedRanges.push( transformedRange );
+		}
+	}
+
+	// `transformedRanges` may be empty if all ranges ended up in graveyard.
+	// If that is the case, do not restore selection.
+	if ( transformedRanges.length ) {
+		document.selection.setRanges( transformedRanges, selectionState.isBackward );
+	}
+}

@@ -14,7 +14,7 @@ let editor, doc, root, undo;
 
 beforeEach( () => {
 	editor = new ModelTestEditor();
-	undo = new UndoCommand( editor );
+	undo = new UndoCommand( editor, 'undo' );
 
 	doc = editor.document;
 
@@ -250,7 +250,7 @@ describe( 'UndoCommand', () => {
 
 			// Because P element was inserted in the middle of removed text and it was not removed,
 			// the selection is set after it.
-			expect( editor.document.selection.getRanges().next().value.isEqual( r( 1, 1 ) ) ).to.be.true;
+			expect( editor.document.selection.getRanges().next().value.isEqual( r( 0, 0 ) ) ).to.be.true;
 			expect( editor.document.selection.isBackward ).to.be.false;
 
 			undo._execute( batch1 );
@@ -262,7 +262,7 @@ describe( 'UndoCommand', () => {
 			expect( root.getChild( 0 ).name ).to.equal( 'p' );
 
 			// Operations for undoing that batch were working on graveyard so document selection should not change.
-			expect( editor.document.selection.getRanges().next().value.isEqual( r( 1, 1 ) ) ).to.be.true;
+			expect( editor.document.selection.getRanges().next().value.isEqual( r( 0, 0 ) ) ).to.be.true;
 			expect( editor.document.selection.isBackward ).to.be.false;
 
 			expect( doc.graveyard.getChildCount() ).to.equal( 6 );
@@ -276,22 +276,8 @@ describe( 'UndoCommand', () => {
 			expect( root.getChildCount() ).to.equal( 0 );
 
 			// Once again transformed range ends up in the graveyard.
-			// So we do not restore it. But since Selection is a LiveRange itself it will update
-			// because the node before it (P element) got removed.
 			expect( editor.document.selection.getRanges().next().value.isEqual( r( 0, 0 ) ) ).to.be.true;
 			expect( editor.document.selection.isBackward ).to.be.false;
-		} );
-
-		it( 'should fire undo event with the undone batch', () => {
-			const batch = doc.batch();
-			const spy = sinon.spy();
-
-			undo.on( 'revert', spy );
-
-			undo._execute();
-
-			expect( spy.calledOnce ).to.be.true;
-			expect( spy.calledWith( batch ) );
 		} );
 	} );
 } );

@@ -38,10 +38,10 @@ export default class UndoEngine extends Feature {
 		this._redoCommand = null;
 
 		/**
-		 * Keeps track of which batch has already been added to undo manager.
+		 * Keeps track of which batch has been added to undo command.
 		 *
 		 * @private
-		 * @member {WeakSet.<engine.model.Batch>} undo.UndoEngine#_batchRegistry
+		 * @member {WeakSet.<engine.model.Batch>} undo.UndoCommand#_batchRegistry
 		 */
 		this._batchRegistry = new WeakSet();
 	}
@@ -51,30 +51,34 @@ export default class UndoEngine extends Feature {
 	 */
 	init() {
 		// Create commands.
-		this._redoCommand = new UndoCommand( this.editor );
-		this._undoCommand = new UndoCommand( this.editor );
+		this._undoCommand = new UndoCommand( this.editor, 'undo' );
+		this._redoCommand = new UndoCommand( this.editor, 'redo' );
 
 		// Register command to the editor.
 		this.editor.commands.set( 'redo', this._redoCommand );
 		this.editor.commands.set( 'undo', this._undoCommand );
 
 		this.listenTo( this.editor.document, 'change', ( evt, type, changes, batch ) => {
-			// Whenever a new batch is created add it to the undo history and clear redo history.
-			if ( batch && !this._batchRegistry.has( batch ) ) {
-				this._batchRegistry.add( batch );
+			// If changes are not a part of a batch or this is not a new batch, omit those changes.
+			if ( !batch || this._batchRegistry.has( batch ) || batch.type == 'ignore' ) {
+				return;
+			}
+
+			if ( batch.type == 'undo' ) {
+				// If this batch comes from `undoCommand`, add it to `redoCommand` stack.
+				this._redoCommand.addBatch( batch );
+			} else if ( batch.type == 'redo' ) {
+				// If this batch comes from `redoCommand`, add it to `undoCommand` stack.
+				this._undoCommand.addBatch( batch );
+			} else {
+				// Any other batch - these are new changes in the document.
+				// Add them to `undoCommand` stack and clear `redoCommand` stack.
 				this._undoCommand.addBatch( batch );
 				this._redoCommand.clearStack();
 			}
-		} );
 
-		// Whenever batch is reverted by undo command, add it to redo history.
-		this.listenTo( this._redoCommand, 'revert', ( evt, batch ) => {
-			this._undoCommand.addBatch( batch );
-		} );
-
-		// Whenever batch is reverted by redo command, add it to undo history.
-		this.listenTo( this._undoCommand, 'revert', ( evt, batch ) => {
-			this._redoCommand.addBatch( batch );
+			// Add the batch to the registry so it will not be processed again.
+			this._batchRegistry.add( batch );
 		} );
 	}
 }
