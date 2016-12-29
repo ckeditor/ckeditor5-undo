@@ -165,6 +165,7 @@ export default class Undo extends Plugin {
 			view.set( {
 				label: label,
 				icon: name,
+				tooltip: true,
 				keystroke
 			} );
 

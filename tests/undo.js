@@ -83,6 +83,7 @@ describe( 'Undo', () => {
 				expect( button.label ).to.equal( label );
 				expect( button.icon ).to.equal( featureName );
 				expect( button.keystroke ).to.equal( featureKeystroke );
+				expect( button.tooltip ).to.be.true;
 			} );
 
 			it( `should execute ${ featureName } command on model execute event`, () => {
