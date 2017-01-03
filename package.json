@@ -6,11 +6,10 @@
   "dependencies": {
     "ckeditor5-core": "ckeditor/ckeditor5-core",
     "ckeditor5-engine": "ckeditor/ckeditor5-engine",
-    "ckeditor5-ui": "ckeditor/ckeditor5-ui",
-    "ckeditor5-ui-default": "ckeditor/ckeditor5-ui-default"
+    "ckeditor5-ui": "ckeditor/ckeditor5-ui"
   },
   "devDependencies": {
-    "@ckeditor/ckeditor5-dev-lint": "^1.0.1",
+    "@ckeditor/ckeditor5-dev-lint": "^2.0.0",
     "ckeditor5-basic-styles": "ckeditor/ckeditor5-basic-styles",
     "ckeditor5-editor-classic": "ckeditor/ckeditor5-editor-classic",
     "ckeditor5-enter": "ckeditor/ckeditor5-enter",
@@ -25,7 +24,7 @@
     "npm": ">=3.0.0"
   },
   "author": "CKSource (http://cksource.com/)",
-  "license": "See LICENSE.md",
+  "license": "(GPL-2.0 OR LGPL-2.1 OR MPL-1.1)",
   "homepage": "https://ckeditor5.github.io",
   "bugs": "https://github.com/ckeditor/ckeditor5-undo/issues",
   "repository": {
