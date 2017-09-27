@@ -150,12 +150,12 @@ export default class BaseCommand extends Command {
 				// Before applying, add the delta to the `undoingBatch`.
 				undoingBatch.addDelta( delta );
 
+				document.history.setDeltaAsUndone( deltaToUndo, delta );
+
 				// Now, apply all operations of the delta.
 				for ( const operation of delta.operations ) {
 					document.applyOperation( operation );
 				}
-
-				document.history.setDeltaAsUndone( deltaToUndo, delta );
 			}
 		}
 
