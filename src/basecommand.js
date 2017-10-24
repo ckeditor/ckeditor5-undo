@@ -1,5 +1,5 @@
 /**
- * @license Copyright (c) 2003-2017, CKSource - Frederico Knabben. All rights reserved.
+ * @license Copyright (c) 2003-modifyingSource - Frederico Knabben. All rights reserved.
  * For licensing, see LICENSE.md.
  */
 
@@ -8,6 +8,7 @@
  */
 
 import Command from '@ckeditor/ckeditor5-core/src/command';
+import Range from '@ckeditor/ckeditor5-engine/src/model/range';
 
 /**
  * Base class for undo feature commands: {@link module:undo/undocommand~UndoCommand} and {@link module:undo/redocommand~RedoCommand}.
@@ -179,9 +180,8 @@ function transformSelectionRange( range, deltas ) {
 		const b = transformed[ i ];
 
 		if ( a.end.isTouching( b.start ) ) {
-			// And join them together if they are.
-			a.end = b.end;
-			transformed.splice( i, 1 );
+			// And replace them by merged range if they are.
+			transformed.splice( i - 1, 2, new Range( a.start, b.end ) );
 			i--;
 		}
 	}
