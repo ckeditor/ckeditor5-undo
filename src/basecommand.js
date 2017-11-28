@@ -60,7 +60,7 @@ export default class BaseCommand extends Command {
 		const docSelection = this.editor.document.selection;
 
 		const selection = {
-			ranges: docSelection.hasOwnRange ? Array.from( docSelection.getRanges() ) : [],
+			ranges: docSelection.hasOwnRange ? Array.from( docSelection.getRanges() ).map( r => Range.createFromRange( r ) ) : [],
 			isBackward: docSelection.isBackward
 		};
 
