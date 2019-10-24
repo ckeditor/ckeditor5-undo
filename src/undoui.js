@@ -9,6 +9,7 @@
 
 import Plugin from '@ckeditor/ckeditor5-core/src/plugin';
 import ButtonView from '@ckeditor/ckeditor5-ui/src/button/buttonview';
+import { createStaticSplitButtonToolbar } from '@ckeditor/ckeditor5-ui/src/dropdown/utils';
 
 import undoIcon from '../theme/icons/undo.svg';
 import redoIcon from '../theme/icons/redo.svg';
@@ -25,6 +26,7 @@ export default class UndoUI extends Plugin {
 	init() {
 		const editor = this.editor;
 		const locale = editor.locale;
+		const componentFactory = editor.ui.componentFactory;
 		const t = editor.t;
 
 		const localizedUndoIcon = locale.uiLanguageDirection == 'ltr' ? undoIcon : redoIcon;
@@ -32,6 +34,13 @@ export default class UndoUI extends Plugin {
 
 		this._addButton( 'undo', t( 'Undo' ), 'CTRL+Z', localizedUndoIcon );
 		this._addButton( 'redo', t( 'Redo' ), 'CTRL+Y', localizedRedoIcon );
+
+		componentFactory.add( 'undoTools', locale => {
+			return createStaticSplitButtonToolbar( locale, [
+				componentFactory.create( 'undo' ),
+				componentFactory.create( 'redo' )
+			] );
+		} );
 	}
 
 	/**
